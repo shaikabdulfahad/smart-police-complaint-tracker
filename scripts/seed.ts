@@ -7,9 +7,10 @@ async function mk(email: string, name: string, role: string, phone: string, extr
   await db.from('users').insert({ id: data.user.id, name, role, phone, ...extra }); return data.user.id;
 }
 (async () => {
+  await db.from('complaints').delete().not('id', 'is', null); // must run before deleting officers (FK)
+  await db.from('app_config').update({ demo_offset_hours: 0 }).eq('id', 1);
   const { data: ul } = await db.auth.admin.listUsers({ perPage: 200 });
-  for (const u of ul?.users ?? []) if (u.email?.endsWith('@demo.test')) await db.auth.admin.deleteUser(u.id);
-  await db.from('complaints').delete().neq('status', 'x' as any); await db.from('app_config').update({ demo_offset_hours: 0 }).eq('id', 1);
+  for (const u of ul?.users ?? []) if (u.email?.endsWith('@demo.test')) { const { error } = await db.auth.admin.deleteUser(u.id); if (error) throw error; }
   const senior = await mk('senior@demo.test', 'Insp. Ravi Kumar (fictional)', 'senior', '9000000010');
   await mk('admin@demo.test', 'Demo Admin', 'admin', '9000000011', { is_demo_admin: true });
   const offs = [await mk('officer1@demo.test', 'SI Anita Rao (fictional)', 'officer', '9000000001', { superior_id: senior }),

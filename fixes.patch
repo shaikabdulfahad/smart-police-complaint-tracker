@@ -1,0 +1,53 @@
+diff --git a/README.md b/README.md
+index 33a589f..f1ea33a 100644
+--- a/README.md
++++ b/README.md
+@@ -1,9 +1,5 @@
+ # Smart Police Complaint Tracker
+ 
+-College prototype (fictional data, not an official police system). Next.js + Supabase + Twilio (mock by default), English/Kannada.
+-
+-# Smart Police Complaint Tracker
+-
+ College project prototype (fictional data, not an official police system). Citizens file complaints; officers get deadlines, automatic SMS reminders (mock by default) and automatic escalation to senior officers. English and Kannada supported.
+ 
+ **Stack:** Next.js (TypeScript), Tailwind, Supabase (Postgres, Auth, RLS), Twilio SMS, Recharts.
+diff --git a/app/api/complaints/route.ts b/app/api/complaints/route.ts
+index 56e67c1..121513e 100644
+--- a/app/api/complaints/route.ts
++++ b/app/api/complaints/route.ts
+@@ -8,7 +8,7 @@ export async function POST(req: Request) {
+     const db = admin(); let citizenId: string | null = null;
+     const tok = req.headers.get('authorization')?.replace('Bearer ', '');
+     if (tok) { const { data: u } = await db.auth.getUser(tok); citizenId = u.user?.id ?? null; }
+-    const { sla } = await getConfig();
++    const { sla, now } = await getConfig(); // due date is based on the (possibly simulated) clock
+     const { data: officers } = await db.from('users').select('id').eq('role', 'officer');
+     if (!officers?.length) return Response.json({ error: 'No officers available' }, { status: 503 });
+     // assign officer with fewest open complaints
+@@ -16,7 +16,7 @@ export async function POST(req: Request) {
+     const officer = counts.sort((a, z) => a.n - z.n)[0].id;
+     const { data, error } = await db.from('complaints').insert({
+       citizen_id: citizenId, citizen_name: name, citizen_phone: phone, category: b.category, location: loc, description: desc,
+-      assigned_officer: officer, status: 'Assigned', due_at: new Date(Date.now() + sla * 3600_000).toISOString() }).select('id,tracking_id').single();
++      assigned_officer: officer, status: 'Assigned', due_at: new Date(now.getTime() + sla * 3600_000).toISOString() }).select('id,tracking_id').single();
+     if (error) throw error;
+     await db.from('complaint_updates').insert({ complaint_id: data.id, status: 'Assigned', remark: 'Complaint registered and assigned to an officer' });
+     return Response.json({ trackingId: data.tracking_id });
+diff --git a/scripts/seed.ts b/scripts/seed.ts
+index 8abeb73..cc459b0 100644
+--- a/scripts/seed.ts
++++ b/scripts/seed.ts
+@@ -7,9 +7,10 @@ async function mk(email: string, name: string, role: string, phone: string, extr
+   await db.from('users').insert({ id: data.user.id, name, role, phone, ...extra }); return data.user.id;
+ }
+ (async () => {
++  await db.from('complaints').delete().not('id', 'is', null); // must run before deleting officers (FK)
++  await db.from('app_config').update({ demo_offset_hours: 0 }).eq('id', 1);
+   const { data: ul } = await db.auth.admin.listUsers({ perPage: 200 });
+-  for (const u of ul?.users ?? []) if (u.email?.endsWith('@demo.test')) await db.auth.admin.deleteUser(u.id);
+-  await db.from('complaints').delete().neq('status', 'x' as any); await db.from('app_config').update({ demo_offset_hours: 0 }).eq('id', 1);
++  for (const u of ul?.users ?? []) if (u.email?.endsWith('@demo.test')) { const { error } = await db.auth.admin.deleteUser(u.id); if (error) throw error; }
+   const senior = await mk('senior@demo.test', 'Insp. Ravi Kumar (fictional)', 'senior', '9000000010');
+   await mk('admin@demo.test', 'Demo Admin', 'admin', '9000000011', { is_demo_admin: true });
+   const offs = [await mk('officer1@demo.test', 'SI Anita Rao (fictional)', 'officer', '9000000001', { superior_id: senior }),

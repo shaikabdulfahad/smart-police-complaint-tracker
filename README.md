@@ -1,9 +1,5 @@
 # Smart Police Complaint Tracker
 
-College prototype (fictional data, not an official police system). Next.js + Supabase + Twilio (mock by default), English/Kannada.
-
-# Smart Police Complaint Tracker
-
 College project prototype (fictional data, not an official police system). Citizens file complaints; officers get deadlines, automatic SMS reminders (mock by default) and automatic escalation to senior officers. English and Kannada supported.
 
 **Stack:** Next.js (TypeScript), Tailwind, Supabase (Postgres, Auth, RLS), Twilio SMS, Recharts.
