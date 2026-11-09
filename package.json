@@ -1,0 +1,29 @@
+{
+ "name": "smart-police-complaint-tracker",
+ "private": true,
+ "scripts": {
+  "dev": "next dev",
+  "build": "next build",
+  "start": "next start",
+  "seed": "tsx --env-file=.env.local scripts/seed.ts",
+  "test": "tsx --test tests/unit.test.ts",
+  "e2e": "tsx --env-file=.env.local scripts/e2e.ts"
+ },
+ "dependencies": {
+  "next": "^15.0.0",
+  "react": "^19.0.0",
+  "react-dom": "^19.0.0",
+  "@supabase/supabase-js": "^2.45.0",
+  "recharts": "^2.12.0",
+  "lucide-react": "^0.400.0"
+ },
+ "devDependencies": {
+  "typescript": "^5.5.0",
+  "@types/node": "^22.0.0",
+  "@types/react": "^19.0.0",
+  "tailwindcss": "^4.0.0",
+  "@tailwindcss/postcss": "^4.0.0",
+  "postcss": "^8.4.0",
+  "tsx": "^4.19.0"
+ }
+}
