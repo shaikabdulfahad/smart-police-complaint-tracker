@@ -55,7 +55,7 @@ export default function Home() {
 
       {/* Features grid */}
       <div>
-        <h2 className="font-bold text-[#0b1f4d] text-center mb-4">PS-2 Features</h2>
+        <h2 className="font-bold text-[#0b1f4d] text-center mb-4">Features</h2>
         <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-4">
           {features.map(({ icon: Icon, title, desc }) => (
             <div key={title} className="bg-white border rounded-lg p-4 space-y-2 hover:border-[#0b1f4d] transition-colors">
