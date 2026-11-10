@@ -1,42 +1,259 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { sb } from '@/lib/supabase';
 import { useT } from '@/lib/lang';
-import { Badge, Card, fmt, btn } from '@/lib/ui';
+import { Badge, Card, fmt, btn, inp } from '@/lib/ui';
+
+const PIE_COLORS = ['#0b1f4d','#3b82f6','#22c55e','#ef4444','#7f1d1d'];
+
 export default function Senior() {
   const { t } = useT();
-  const [rows, setRows] = useState<any[]>([]); const [rem, setRem] = useState<any[]>([]); const [esc, setEsc] = useState<any[]>([]); const [offs, setOffs] = useState<any[]>([]);
-  const [me, setMe] = useState<any>(null); const [note, setNote] = useState(''); const [busy, setBusy] = useState(false);
+  const [rows, setRows] = useState<any[]>([]);
+  const [rem, setRem] = useState<any[]>([]);
+  const [esc, setEsc] = useState<any[]>([]);
+  const [offs, setOffs] = useState<any[]>([]);
+  const [me, setMe] = useState<any>(null);
+  const [note, setNote] = useState(''); const [busy, setBusy] = useState(false);
+  const [catFilter, setCatFilter] = useState(''); const [stFilter, setStFilter] = useState('');
+  const [tab, setTab] = useState<'overview'|'complaints'|'escalated'|'reminders'|'history'>('overview');
+
   async function load() {
-    const { data: { user } } = await sb.auth.getUser(); if (!user) { location.href = '/login'; return; }
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) { location.href = '/login'; return; }
     const { data: m } = await sb.from('users').select('*').eq('id', user.id).single(); setMe(m);
-    setRows((await sb.from('complaints').select('*').order('due_at')).data ?? []);
+    setRows((await sb.from('complaints').select('*, officer:assigned_officer(name,department)').order('due_at')).data ?? []);
     setRem((await sb.from('reminder_logs').select('*, complaints(tracking_id), officer:officer_id(name)').order('real_at', { ascending: false })).data ?? []);
-    setEsc((await sb.from('escalation_logs').select('*, complaints(tracking_id)').order('real_at', { ascending: false })).data ?? []);
-    setOffs((await sb.from('users').select('id,name').eq('role', 'officer')).data ?? []);
+    setEsc((await sb.from('escalation_logs').select('*, complaints(tracking_id,category,location), from_off:from_officer(name), to_sen:to_senior(name)').order('real_at', { ascending: false })).data ?? []);
+    setOffs((await sb.from('users').select('id,name,department').eq('role', 'officer')).data ?? []);
   }
   useEffect(() => { load(); }, []);
+
   async function advance(days: number) {
     setBusy(true); setNote('');
     const { data: { session } } = await sb.auth.getSession();
-    try { const r = await fetch('/api/demo/advance', { method: 'POST', headers: { Authorization: 'Bearer ' + session?.access_token }, body: JSON.stringify({ days }) });
-      const j = await r.json().catch(() => ({})); setNote(r.ok ? j.message : t('error') + ' (' + r.status + ')'); await load(); } finally { setBusy(false); }
+    try {
+      const r = await fetch('/api/demo/advance', { method: 'POST', headers: { Authorization: 'Bearer ' + session?.access_token }, body: JSON.stringify({ days }) });
+      const j = await r.json().catch(() => ({}));
+      setNote(r.ok ? j.message : t('error') + ' (' + r.status + ')');
+      await load();
+    } finally { setBusy(false); }
   }
-  async function reassign(id: string, officer: string) { await sb.from('complaints').update({ assigned_officer: officer, status: 'Assigned' }).eq('id', id); load(); }
+
+  async function reassign(id: string, officer: string) {
+    await sb.from('complaints').update({ assigned_officer: officer, status: 'Assigned' }).eq('id', id);
+    await sb.from('complaint_updates').insert({ complaint_id: id, status: 'Assigned' as any, remark: 'Reassigned by Senior Officer' });
+    load();
+  }
+
   const n = (s: string) => rows.filter(r => r.status === s).length;
-  const chart = offs.map(o => ({ name: o.name, pending: rows.filter(r => r.assigned_officer === o.id && r.status !== 'Resolved').length }));
   const escRows = rows.filter(r => r.status === 'Escalated');
-  return <div className="space-y-4">
-    {me?.is_demo_admin && <div className="bg-amber-50 border border-amber-300 rounded p-3 flex flex-wrap gap-2 items-center"><b className="text-sm">DEMO</b>
-      <button className={btn} disabled={busy} onClick={() => advance(3)}>{t('advance3')}</button><button className={btn} disabled={busy} onClick={() => advance(1)}>{t('advance1')}</button>{note && <span className="text-sm">{note}</span>}</div>}
-    <div className="grid grid-cols-2 md:grid-cols-5 gap-3"><Card label={t('total')} v={rows.length} /><Card label={t('resolved')} v={n('Resolved')} /><Card label={t('pending')} v={rows.length - n('Resolved')} /><Card label={t('overdue')} v={n('Overdue')} cls="border-red-400" /><Card label={t('escalated')} v={n('Escalated')} cls="border-red-900 border-2" /></div>
-    <div className="bg-white border rounded p-4 h-64"><ResponsiveContainer><BarChart data={chart}><XAxis dataKey="name" /><YAxis allowDecimals={false} /><Tooltip /><Bar dataKey="pending" fill="#0b1f4d" /></BarChart></ResponsiveContainer></div>
-    <div className="bg-white border-2 border-red-900 rounded p-4"><h2 className="font-bold text-red-900">{t('escalated')} ({escRows.length})</h2>
-      {escRows.map(r => <div key={r.id} className="flex flex-wrap gap-2 items-center border-t py-2 text-sm"><b>{r.tracking_id}</b><Badge c={r} /><span>{r.location}</span>
-        <select className="border rounded text-xs ml-auto" value={r.assigned_officer ?? ''} onChange={e => reassign(r.id, e.target.value)}>{offs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</select></div>)}</div>
-    <div className="grid md:grid-cols-2 gap-4 text-sm">
-      <div className="bg-white border rounded p-4"><h2 className="font-bold">{t('reminderHistory')}</h2>{rem.map(x => <p key={x.id} className="border-t py-1">{x.complaints?.tracking_id} → {x.officer?.name} · {x.status} ({x.mode}) · {fmt(x.simulated_at)}</p>)}</div>
-      <div className="bg-white border rounded p-4"><h2 className="font-bold">{t('escalationHistory')}</h2>{esc.map(x => <p key={x.id} className="border-t py-1">{x.complaints?.tracking_id} · {x.reason} · {fmt(x.simulated_at)}</p>)}</div></div>
-  </div>;
+  const CATS = ['Cybercrime','Financial Fraud','Lost Property','Traffic Complaints'];
+  const barData = offs.map(o => ({
+    name: o.name.replace(' (fictional)','').replace('SI ',''),
+    pending: rows.filter(r => r.assigned_officer === o.id && !['Resolved','Escalated'].includes(r.status)).length,
+    resolved: rows.filter(r => r.assigned_officer === o.id && r.status === 'Resolved').length,
+  }));
+  const pieData = CATS.map(c => ({ name: t(('cat.' + c) as any), value: rows.filter(r => r.category === c).length }));
+  const avgResolution = (() => {
+    const resolved = rows.filter(r => r.status === 'Resolved' && r.resolved_at);
+    if (!resolved.length) return null;
+    const avg = resolved.reduce((s, r) => s + (new Date(r.resolved_at).getTime() - new Date(r.submitted_at).getTime()), 0) / resolved.length;
+    return (avg / 3600_000).toFixed(1);
+  })();
+  const slaBreachRate = rows.length ? Math.round((n('Overdue') + n('Escalated')) / rows.length * 100) : 0;
+
+  const shownRows = rows.filter(r =>
+    (!catFilter || r.category === catFilter) &&
+    (!stFilter || r.status === stFilter)
+  );
+
+  const TABS: { key: typeof tab; label: string }[] = [
+    { key: 'overview', label: 'Overview' },
+    { key: 'complaints', label: 'All Complaints' },
+    { key: 'escalated', label: `⚠ Escalated (${n('Escalated')})` },
+    { key: 'reminders', label: 'Reminders' },
+    { key: 'history', label: 'Escalation Log' },
+  ];
+
+  return (
+    <div className="space-y-4">
+      {/* Demo controls */}
+      {me?.is_demo_admin && (
+        <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 flex flex-wrap gap-2 items-center">
+          <span className="font-bold text-sm text-amber-800">🧪 DEMO MODE</span>
+          <button className={btn} disabled={busy} onClick={() => advance(3)}>{t('advance3')}</button>
+          <button className={btn} disabled={busy} onClick={() => advance(1)}>{t('advance1')}</button>
+          {note && <span className="text-sm font-medium text-amber-900 bg-amber-100 rounded px-2 py-1 flex-1">{note}</span>}
+        </div>
+      )}
+
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <Card label={t('total')} v={rows.length} />
+        <Card label={t('resolved')} v={n('Resolved')} />
+        <Card label={t('pending')} v={rows.length - n('Resolved')} />
+        <Card label={t('overdue')} v={n('Overdue')} cls="border-red-400" />
+        <Card label={t('escalated')} v={n('Escalated')} cls="border-red-900 border-2" />
+      </div>
+
+      {/* SLA metrics */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div className="bg-white border rounded-lg p-4 text-center">
+          <p className="text-xs text-slate-500">SLA Breach Rate</p>
+          <p className={`text-2xl font-bold ${slaBreachRate > 20 ? 'text-red-600' : 'text-green-600'}`}>{slaBreachRate}%</p>
+        </div>
+        <div className="bg-white border rounded-lg p-4 text-center">
+          <p className="text-xs text-slate-500">Avg Resolution Time</p>
+          <p className="text-2xl font-bold text-[#0b1f4d]">{avgResolution ? avgResolution + 'h' : '—'}</p>
+        </div>
+        <div className="bg-white border rounded-lg p-4 text-center">
+          <p className="text-xs text-slate-500">Reminders Sent</p>
+          <p className="text-2xl font-bold text-[#0b1f4d]">{rem.length}</p>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 border-b flex-wrap">
+        {TABS.map(tb => (
+          <button key={tb.key} onClick={() => setTab(tb.key)}
+            className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${tab === tb.key ? 'border-[#0b1f4d] text-[#0b1f4d]' : 'border-transparent text-slate-500 hover:text-slate-700'} ${tb.key === 'escalated' && n('Escalated') > 0 ? 'text-red-700' : ''}`}>
+            {tb.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Overview tab */}
+      {tab === 'overview' && (
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="bg-white border rounded-lg p-4">
+            <p className="font-semibold text-sm mb-2">Complaints per Officer</p>
+            <div className="h-56"><ResponsiveContainer><BarChart data={barData}>
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} /><Tooltip />
+              <Bar dataKey="pending" fill="#0b1f4d" name="Pending" stackId="a" />
+              <Bar dataKey="resolved" fill="#22c55e" name="Resolved" stackId="a" />
+            </BarChart></ResponsiveContainer></div>
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <p className="font-semibold text-sm mb-2">Complaints by Category</p>
+            <div className="h-56"><ResponsiveContainer><PieChart>
+              <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={({ name, value }) => `${value}`}>
+                {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+              </Pie><Legend /><Tooltip />
+            </PieChart></ResponsiveContainer></div>
+          </div>
+        </div>
+      )}
+
+      {/* All complaints tab */}
+      {tab === 'complaints' && (
+        <div className="space-y-3">
+          <div className="flex gap-2 flex-wrap">
+            <select className={inp + ' max-w-48'} value={catFilter} onChange={e => setCatFilter(e.target.value)}>
+              <option value="">{t('all')} {t('category')}</option>
+              {CATS.map(c => <option key={c} value={c}>{t(('cat.' + c) as any)}</option>)}
+            </select>
+            <select className={inp + ' max-w-48'} value={stFilter} onChange={e => setStFilter(e.target.value)}>
+              <option value="">{t('all')} {t('status')}</option>
+              {['Submitted','Assigned','In Progress','Resolved','Overdue','Escalated'].map(s =>
+                <option key={s} value={s}>{t(('st.' + s) as any)}</option>)}
+            </select>
+            <span className="text-sm text-slate-500 self-center">{shownRows.length} complaints</span>
+          </div>
+          <div className="overflow-x-auto bg-white border rounded-lg">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-100 text-xs uppercase tracking-wide text-left">
+                <tr><th className="p-3">ID</th><th className="p-3">{t('category')}</th><th className="p-3">{t('officer')}</th>
+                  <th className="p-3">{t('department')}</th><th className="p-3">{t('dueDate')}</th><th className="p-3">{t('status')}</th></tr>
+              </thead>
+              <tbody>
+                {shownRows.map(r => (
+                  <tr key={r.id} className={`border-t ${r.status === 'Escalated' ? 'bg-red-100' : r.status === 'Overdue' ? 'bg-red-50' : ''}`}>
+                    <td className="p-3 font-mono font-medium">{r.tracking_id}</td>
+                    <td className="p-3">{t(('cat.' + r.category) as any)}</td>
+                    <td className="p-3">{r.officer?.name?.replace(' (fictional)','').replace('SI ','')}</td>
+                    <td className="p-3 text-slate-500">{r.officer?.department ?? '—'}</td>
+                    <td className={`p-3 ${new Date(r.due_at) < new Date() && r.status !== 'Resolved' ? 'text-red-600 font-medium' : ''}`}>{fmt(r.due_at)}</td>
+                    <td className="p-3"><Badge c={r} /></td>
+                  </tr>
+                ))}
+                {!shownRows.length && <tr><td colSpan={6} className="p-4 text-center text-slate-400">{t('noData')}</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Escalated tab */}
+      {tab === 'escalated' && (
+        <div className="space-y-3">
+          {!escRows.length && <div className="bg-green-50 border border-green-200 rounded-lg p-6 text-center text-green-700 font-medium">✅ No escalated complaints</div>}
+          {escRows.map(r => (
+            <div key={r.id} className="bg-white border-2 border-red-900 rounded-lg p-4 space-y-2">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="font-bold text-red-900">{r.tracking_id}</span>
+                <Badge c={r} />
+                <span className="text-sm">{t(('cat.' + r.category) as any)} · {r.location}</span>
+              </div>
+              <p className="text-sm text-slate-600">{r.description}</p>
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                <span className="text-xs text-slate-500">Reassign to:</span>
+                <select className="border rounded text-sm px-2 py-1" value={r.assigned_officer ?? ''}
+                  onChange={e => reassign(r.id, e.target.value)}>
+                  {offs.map(o => <option key={o.id} value={o.id}>{o.name?.replace(' (fictional)','').replace('SI ','')} ({o.department ?? '—'})</option>)}
+                </select>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Reminders tab */}
+      {tab === 'reminders' && (
+        <div className="bg-white border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100 text-xs uppercase tracking-wide text-left">
+              <tr><th className="p-3">Complaint</th><th className="p-3">Officer</th><th className="p-3">Mode</th><th className="p-3">Status</th><th className="p-3">Sent at (simulated)</th></tr>
+            </thead>
+            <tbody>
+              {rem.map(x => (
+                <tr key={x.id} className="border-t">
+                  <td className="p-3 font-mono">{x.complaints?.tracking_id}</td>
+                  <td className="p-3">{x.officer?.name?.replace(' (fictional)','').replace('SI ','')}</td>
+                  <td className="p-3"><span className={`px-2 py-0.5 rounded text-xs ${x.mode === 'real' ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'}`}>{x.mode}</span></td>
+                  <td className="p-3"><span className={`px-2 py-0.5 rounded text-xs ${x.status === 'sent' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>{x.status}</span></td>
+                  <td className="p-3 text-slate-500">{fmt(x.simulated_at)}</td>
+                </tr>
+              ))}
+              {!rem.length && <tr><td colSpan={5} className="p-4 text-center text-slate-400">{t('noData')}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Escalation history tab */}
+      {tab === 'history' && (
+        <div className="bg-white border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-100 text-xs uppercase tracking-wide text-left">
+              <tr><th className="p-3">Complaint</th><th className="p-3">Category</th><th className="p-3">From Officer</th><th className="p-3">To Senior</th><th className="p-3">Reason</th><th className="p-3">Escalated At</th></tr>
+            </thead>
+            <tbody>
+              {esc.map(x => (
+                <tr key={x.id} className="border-t">
+                  <td className="p-3 font-mono font-medium">{x.complaints?.tracking_id}</td>
+                  <td className="p-3">{x.complaints?.category}</td>
+                  <td className="p-3">{x.from_off?.name?.replace(' (fictional)','').replace('SI ','')}</td>
+                  <td className="p-3">{x.to_sen?.name?.replace(' (fictional)','')}</td>
+                  <td className="p-3 text-slate-500">{x.reason}</td>
+                  <td className="p-3 text-slate-500">{fmt(x.simulated_at)}</td>
+                </tr>
+              ))}
+              {!esc.length && <tr><td colSpan={6} className="p-4 text-center text-slate-400">{t('noData')}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }

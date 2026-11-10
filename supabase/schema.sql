@@ -6,6 +6,7 @@ create table users (
   id uuid primary key references auth.users(id) on delete cascade,
   name text not null, phone text, role user_role not null default 'citizen',
   superior_id uuid references users(id), is_demo_admin boolean default false,
+  department text,
   created_at timestamptz default now());
 
 create sequence complaint_seq start 1024;
@@ -20,7 +21,8 @@ create table complaints (
   status c_status not null default 'Submitted',
   submitted_at timestamptz not null default now(),
   due_at timestamptz not null,
-  resolved_at timestamptz);
+  resolved_at timestamptz,
+  attachments jsonb default '[]'::jsonb);
 create index on complaints(status, due_at);
 create index on complaints(assigned_officer);
 create index on complaints(citizen_id);
@@ -34,12 +36,12 @@ create table reminder_logs (
   mode text not null, status text not null, provider_id text, error text,
   unique (complaint_id, kind, due_at));
 
+-- escalation_logs: no unique(complaint_id) so reassigned complaints can re-escalate
 create table escalation_logs (
   id uuid primary key default gen_random_uuid(),
   complaint_id uuid not null references complaints(id) on delete cascade,
   from_officer uuid references users(id), to_senior uuid references users(id),
-  reason text not null, simulated_at timestamptz not null, real_at timestamptz default now(),
-  unique (complaint_id));
+  reason text not null, simulated_at timestamptz not null, real_at timestamptz default now());
 
 create table complaint_updates (
   id uuid primary key default gen_random_uuid(),
@@ -79,3 +81,13 @@ create policy "cfg_admin" on app_config for all using (my_role() = 'admin');
 
 -- Citizen self-registration (role locked to citizen)
 create policy "citizen_signup" on users for insert with check (id = auth.uid() and role = 'citizen');
+
+-- PS-2 fix: officer can insert updates on their assigned complaints
+-- (server-side route uses service role anyway, but this allows future direct-client patterns)
+create policy "officer_upd_insert" on complaint_updates for insert
+  with check (
+    exists (select 1 from complaints c where c.id = complaint_id and c.assigned_officer = auth.uid())
+    or my_role() in ('senior','admin'));
+
+-- Allow escalation SMS to be logged (kind='escalation', relaxes unique constraint by kind)
+-- The unique constraint is on (complaint_id, kind, due_at) so escalation entries don't conflict with deadline ones.
