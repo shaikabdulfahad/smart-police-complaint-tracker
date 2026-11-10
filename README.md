@@ -1,133 +1,127 @@
 # Smart Police Complaint Tracker
 
-College project prototype (fictional data, not an official police system). Citizens file complaints; officers get deadlines, automatic SMS reminders (mock by default) and automatic escalation to senior officers. English and Kannada supported.
+A web application prototype for registering, tracking, and managing public-service complaints. Citizens can submit a complaint and follow its status; staff can review assigned cases, record updates, and escalate unresolved complaints.
 
-**PS-2 alignment:** Follow-up and Reminder System for Grievance Tracking — Police Department pilot.
+> **Prototype notice:** This project is an educational prototype, not an official police service or emergency-reporting channel. It uses fictional demo data. Do not submit real complaints, personal information, or evidence.
 
-**Stack:** Next.js (TypeScript), Tailwind CSS v4, Supabase (Postgres, Auth, RLS), Twilio SMS, Recharts.
+## What it includes
 
----
+- Complaint submission with a tracking ID and configurable service deadline.
+- Public tracking with status and action history.
+- Role-based citizen, officer, senior-officer, and admin experiences.
+- Department assignment, overdue reminders, and escalation workflows.
+- Private document storage with authorization-checked, short-lived links.
+- English and Kannada interface.
+- Demo-time controls and mock SMS for presentations.
 
-## Quick start (local)
+## Technology
+
+- Next.js and TypeScript
+- Supabase Auth, Postgres, Row Level Security, and Storage
+- Tailwind CSS
+- Recharts
+- Twilio integration (optional; mock mode is the default)
+
+## Run locally
+
+### Prerequisites
+
+- Node.js compatible with the project
+- npm
+- A Supabase project for development or demo use
+
+### 1. Install dependencies
 
 ```bash
 npm ci
-cp .env.example .env.local   # fill in Supabase keys (see Setup below)
-npm run seed                  # after setting SEED_DEMO_CONFIRM in .env.local
-npm run dev                   # http://localhost:3000
 ```
 
----
+### 2. Configure Supabase
 
-## Setup (do these in order)
+In the Supabase SQL Editor, run these scripts in order:
 
-### 1. Supabase project
-1. Create a free project at supabase.com.
-2. **SQL Editor → New query:** paste the full contents of `supabase/schema.sql` and click **Run**.
-3. **Authentication → Sign In / Providers → Email:** turn off **Confirm email** for demo accounts.
+1. [`supabase/schema.sql`](./supabase/schema.sql)
+2. [`supabase/migration_ps2.sql`](./supabase/migration_ps2.sql)
 
-### 2. Storage bucket (for document uploads)
-1. In Supabase go to **Storage → New bucket**.
-2. Name: `complaint-docs`, Public: **off**.
-3. Run `supabase/migration_ps2.sql`. It configures 5 MB PDF/JPG/PNG uploads and allows authenticated citizens to upload only to their own complaint. If you previously created a broad authenticated INSERT policy, remove it; Storage policies are permissive when any matching policy allows access.
-4. Citizens must sign in to upload documents; complaint submission itself remains available without signing in.
+The migration creates/configures the private `complaint-docs` bucket and its upload policy. Review and remove any older broad Storage upload policies; Supabase combines permissive policies.
 
-### 3. Environment variables
-Copy `.env.example` to `.env.local` and fill in:
-```
-NEXT_PUBLIC_SUPABASE_URL=       # Project Settings → API → Project URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY=  # Project Settings → API → anon key
-SUPABASE_SERVICE_ROLE_KEY=      # Project Settings → API → service_role key (server only, never expose)
-DEMO_MODE=true
-SLA_HOURS=72
-GRACE_HOURS=24
-SMS_MODE=mock
-CRON_SECRET=any-random-string
-SEED_DEMO_CONFIRM=I_ACCEPT_DEMO_DATA_RESET
-```
+### 3. Configure local environment
 
-### 4. Seed
-Seeding is restricted to demo mode and replaces only the 20 generated fictional complaints. It does not delete other complaints, profiles, or auth accounts. To confirm the reset, add this line to `.env.local` before running the seed:
+Copy `.env.example` to `.env.local` and set the Supabase URL and keys from **Project Settings → API**.
 
-```
-SEED_DEMO_CONFIRM=I_ACCEPT_DEMO_DATA_RESET
-```
+| Variable | Purpose |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase publishable/anon key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only Supabase secret; never expose or prefix with `NEXT_PUBLIC_` |
+| `DEMO_MODE` | Set to `true` for the fictional demo |
+| `SMS_MODE` | Keep `mock` for the demo |
+| `SLA_HOURS` | Complaint response deadline in hours (default: `72`) |
+| `GRACE_HOURS` | Escalation grace period in hours (default: `24`) |
+| `CRON_SECRET` | Long, random secret for the scheduled processing endpoint; generate one with `openssl rand -hex 32` |
+| `SEED_DEMO_CONFIRM` | Set only when intentionally reseeding demo data |
+| `SMS_ALLOWLIST`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` | Optional Twilio configuration; leave unset for mock SMS |
+
+Replace the `CRON_SECRET=change-me` template value with a generated secret. Keep `.env.local` out of Git. The `TZ` setting can be used locally as needed, but Vercel reserves that variable name; do not add it in Vercel.
+
+### 4. Optional: seed fictional demo data
+
+Only use a dedicated, disposable demo Supabase project. The seed script:
+
+- Requires `DEMO_MODE=true` and `SEED_DEMO_CONFIRM=I_ACCEPT_DEMO_DATA_RESET`.
+- Replaces complaints marked as demo data and their related logs.
+- Resets the shared demo clock.
+- Creates or updates five demo staff accounts and resets their passwords to the shared demo password defined in [`scripts/seed.ts`](./scripts/seed.ts).
+
+**Do not run this against a project containing real or valuable data. Do not use the seeded accounts in a real deployment.**
+
+After confirming the target project and setting both safeguards in `.env.local`, run:
 
 ```bash
 npm run seed
 ```
-Creates 20 fictional complaints across all statuses, plus five demo accounts.
-Re-runnable — replaces only the previous seeded complaints and updates the five demo accounts.
 
----
+### 5. Start the app
 
-## Demo logins (password: `Demo@12345`)
+```bash
+npm run dev
+```
 
-| Email | Role | Notes |
-|---|---|---|
-| officer1@demo.test | Officer | Cybercrime Cell |
-| officer2@demo.test | Officer | Traffic Division |
-| officer3@demo.test | Officer | General Crimes |
-| senior@demo.test | Senior Officer | Views all complaints |
-| admin@demo.test | Admin + Demo Admin | Has +3 Days / +1 Day buttons on /senior |
+Open [http://localhost:3000](http://localhost:3000).
 
----
+## Checks
 
-## 5-minute demo flow (PS-2)
+```bash
+npm test
+npm run build
+```
 
-1. Submit a complaint at `/submit` → get SPT tracking ID → track at `/track`
-2. Login as `officer1@demo.test` → view assigned complaints → update status
-3. Login as `admin@demo.test` → go to `/senior`
-4. Click **Advance Demo Time +3 Days** → complaints go overdue, reminders logged
-5. Click **Advance Demo Time +1 Day** → complaints escalate, senior gets notified
-6. Click **⚠ Escalated** tab → reassign a complaint
-7. Click **ಕನ್ನಡ** in the navbar → full Kannada UI
+`npm run e2e` writes a test complaint and advances the configured demo clock. Run it only against a disposable Supabase demo project, never a production or shared dataset.
 
----
+## Deployment
 
-## Folder structure
+The project can be deployed to Vercel with the Next.js preset and repository root as the project root. Add the runtime environment variables in Vercel; use separate, strong secrets and keep service-role/Twilio credentials server-side. Do not add `SEED_DEMO_CONFIRM` to Vercel. Redeploy after changing environment variables.
+
+[`vercel.json`](./vercel.json) schedules `/api/cron/process` daily at 03:00 UTC. Configure `CRON_SECRET` in the hosting environment. Demo time controls invoke processing directly and should only be used with fictional demo data.
+
+## Before any real-world use
+
+This prototype has not been approved or assessed for handling real complaints or sensitive personal information. A real deployment would require an authorized operating partner, legal/privacy review, security assessment, incident and support procedures, retention rules, accessibility testing, reliable backups, and a controlled pilot. It is not a substitute for emergency services or official reporting channels.
+
+## Repository map
 
 | Path | Purpose |
 |---|---|
-| `app/` | Pages: home, submit, track, login, my, officer, senior + API routes |
-| `lib/` | Deadline processor, demo clock, SMS gate, i18n (80 keys), UI helpers |
-| `supabase/schema.sql` | Tables, indexes, RLS policies (run this first) |
-| `supabase/migration_ps2.sql` | Adds department + attachments if schema already applied |
-| `scripts/seed.ts` | 20 fictional complaints + 5 demo accounts |
-| `scripts/e2e.ts` | End-to-end workflow test against live Supabase |
-| `tests/unit.test.ts` | Unit tests: i18n parity, SMS safety gates |
-| `docs/PS2_PRESENTATION.md` | 5-minute demo script + judge Q&A |
-| `vercel.json` | Daily cron for deadline processor (Hobby plan limit) |
+| `app/` | Pages and server API routes |
+| `lib/` | Deadline processing, demo clock, SMS, and localization helpers |
+| `supabase/schema.sql` | Base database schema and policies |
+| `supabase/migration_ps2.sql` | Department, attachment, demo-marker, and policy migration |
+| `scripts/seed.ts` | Guarded fictional demo data seeder |
+| `scripts/e2e.ts` | Supabase-backed workflow test |
+| `tests/unit.test.ts` | Unit tests |
+| `docs/SETUP_AND_DEPLOYMENT.md` | Detailed local setup and deployment notes |
+| `docs/DEMO_GUIDE.md` | Walkthrough for a fictional-data demo |
 
----
+## License
 
-## Tests
-
-```bash
-npm test       # unit tests (i18n parity, SMS safety)
-npm run e2e    # integration test against Supabase (needs DEMO_MODE=true)
-```
-
----
-
-## SMS (optional for demo)
-
-Default is mock mode — no real messages sent, everything logged.
-To send one real test SMS:
-1. Create a Twilio trial account, verify a phone number.
-2. Set `SMS_MODE=real`, `DEMO_MODE=false`, fill in Twilio credentials, add the number to `SMS_ALLOWLIST`.
-3. Status `sent` is recorded only when Twilio returns a message SID.
-
----
-
-## Deployment (Vercel + Supabase)
-
-1. Push to GitHub. Import into Vercel (Next.js preset).
-2. Add all variables from `.env.example` in Vercel. `SUPABASE_SERVICE_ROLE_KEY` is server-only — never prefix with `NEXT_PUBLIC_`.
-3. Keep `DEMO_MODE=true` and `SMS_MODE=mock` for the presentation.
-4. `vercel.json` schedules the deadline processor daily at 03:00 UTC (08:30 IST). Vercel cron schedules use UTC.
-5. The demo +3/+1 Day buttons trigger the processor directly — the cron is not needed for the demo.
-
----
-
-**License:** MIT · Not an official government system · All data is fictional
+MIT. See [`LICENSE`](./LICENSE).
