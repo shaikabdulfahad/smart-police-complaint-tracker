@@ -1,8 +1,9 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useT } from '@/lib/lang';
 import { inp, btn, Badge, fmt } from '@/lib/ui';
+import { sb } from '@/lib/supabase';
 
 const STATUS_ORDER = ['Submitted','Assigned','In Progress','Resolved','Overdue','Escalated'];
 const STATUS_COLOR: Record<string,string> = {
@@ -10,7 +11,15 @@ const STATUS_COLOR: Record<string,string> = {
   Resolved:'bg-green-500', Overdue:'bg-red-500', Escalated:'bg-red-900',
 };
 
-export default function Track() {
+export default function TrackPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-slate-500">Loading...</div>}>
+      <Track />
+    </Suspense>
+  );
+}
+
+function Track() {
   const { t } = useT();
   const sp = useSearchParams();
   const [q, setQ] = useState(sp?.get('id') ?? '');
@@ -22,7 +31,10 @@ export default function Track() {
     if (!qv.trim()) return;
     setE(''); setD(null); setBusy(true);
     try {
-      const r = await fetch('/api/track?id=' + encodeURIComponent(qv));
+      const { data: { session }, error: sessionError } = await sb.auth.getSession();
+      if (sessionError) throw sessionError;
+      const headers = session ? { Authorization: `Bearer ${session.access_token}` } : undefined;
+      const r = await fetch('/api/track?id=' + encodeURIComponent(qv), { headers });
       const j = await r.json();
       if (!r.ok) setE(j.error); else setD(j);
     } catch { setE(t('error')); } finally { setBusy(false); }
@@ -41,7 +53,7 @@ export default function Track() {
       <div className="bg-white border rounded-lg p-5 shadow-sm">
         <h1 className="text-xl font-bold text-[#0b1f4d] mb-3">{t('track')}</h1>
         <form onSubmit={e => { e.preventDefault(); go(); }} className="flex gap-2">
-          <input className={inp} placeholder="SPT1024" value={q}
+          <input className={inp} placeholder="SPT0123456789ABCDEF" value={q}
             onChange={x => setQ(x.target.value.toUpperCase())} />
           <button className={btn} disabled={busy}>{busy ? '...' : t('track')}</button>
         </form>

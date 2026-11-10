@@ -46,21 +46,24 @@ export default function Submit() {
 
       // Upload attachments if any
       if (files.length && j.complaintId) {
-        let uploadWarn = false;
-        const urls: { name: string; url: string }[] = [];
-        for (const file of files) {
-          const path = `${j.complaintId}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-          const { error: ue } = await sb.storage.from('complaint-docs').upload(path, file);
-          if (ue) { uploadWarn = true; continue; }
-          const { data: pub } = sb.storage.from('complaint-docs').getPublicUrl(path);
-          urls.push({ name: file.name, url: pub.publicUrl });
+        let uploadWarn = !session;
+        const attachments: { name: string; path: string }[] = [];
+        if (session) {
+          for (const file of files) {
+            const path = `${j.complaintId}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+            const { error: uploadError } = await sb.storage.from('complaint-docs').upload(path, file);
+            if (uploadError) { uploadWarn = true; continue; }
+            attachments.push({ name: file.name, path });
+          }
         }
-        if (urls.length) {
-          await fetch('/api/complaints/' + j.complaintId + '/attachments', {
-            method: 'PATCH', headers, body: JSON.stringify({ attachments: urls }),
+        if (attachments.length) {
+          const response = await fetch('/api/complaints/' + j.complaintId + '/attachments', {
+            method: 'PATCH', headers, body: JSON.stringify({ attachments }),
           });
+          if (!response.ok) uploadWarn = true;
         }
-        if (uploadWarn) setFail(t('docUploadFail'));
+        if (!session) setFail(t('docLoginRequired'));
+        else if (uploadWarn) setFail(t('docUploadFail'));
       }
       setId(tid);
     } catch (e: any) { setFail(e.message || t('error')); }

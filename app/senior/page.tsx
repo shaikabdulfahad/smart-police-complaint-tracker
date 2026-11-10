@@ -15,43 +15,90 @@ export default function Senior() {
   const [offs, setOffs] = useState<any[]>([]);
   const [me, setMe] = useState<any>(null);
   const [note, setNote] = useState(''); const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true); const [loadError, setLoadError] = useState('');
   const [catFilter, setCatFilter] = useState(''); const [stFilter, setStFilter] = useState('');
   const [tab, setTab] = useState<'overview'|'complaints'|'escalated'|'reminders'|'history'>('overview');
 
   async function load() {
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) { location.href = '/login'; return; }
-    const { data: m } = await sb.from('users').select('*').eq('id', user.id).single(); setMe(m);
-    setRows((await sb.from('complaints').select('*, officer:assigned_officer(name,department)').order('due_at')).data ?? []);
-    setRem((await sb.from('reminder_logs').select('*, complaints(tracking_id), officer:officer_id(name)').order('real_at', { ascending: false })).data ?? []);
-    setEsc((await sb.from('escalation_logs').select('*, complaints(tracking_id,category,location), from_off:from_officer(name), to_sen:to_senior(name)').order('real_at', { ascending: false })).data ?? []);
-    setOffs((await sb.from('users').select('id,name,department').eq('role', 'officer')).data ?? []);
+    setLoadError('');
+    try {
+      const { data: { user }, error: authError } = await sb.auth.getUser();
+      if (authError) throw authError;
+      if (!user) { location.href = '/login'; return; }
+
+      const { data: profile, error: profileError } = await sb.from('users').select('*').eq('id', user.id).single();
+      if (profileError) throw profileError;
+      if (!['senior', 'admin'].includes(profile.role)) {
+        throw new Error('You do not have permission to view the senior dashboard.');
+      }
+
+      const [complaints, reminders, escalations, officers] = await Promise.all([
+        sb.from('complaints').select('*, officer:assigned_officer(name,department)').order('due_at'),
+        sb.from('reminder_logs').select('*, complaints(tracking_id), officer:officer_id(name)')
+          .eq('kind', 'deadline').order('real_at', { ascending: false }),
+        sb.from('escalation_logs').select('*, complaints(tracking_id,category,location), from_off:from_officer(name), to_sen:to_senior(name)')
+          .order('real_at', { ascending: false }),
+        sb.from('users').select('id,name,department').eq('role', 'officer'),
+      ]);
+      const failed = [complaints, reminders, escalations, officers].find(result => result.error);
+      if (failed?.error) throw failed.error;
+
+      setMe(profile);
+      setRows(complaints.data ?? []);
+      setRem(reminders.data ?? []);
+      setEsc(escalations.data ?? []);
+      setOffs(officers.data ?? []);
+    } catch (e: any) {
+      setLoadError(e?.message || 'Unable to load the senior dashboard.');
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => { load(); }, []);
 
   async function advance(days: number) {
     setBusy(true); setNote('');
-    const { data: { session } } = await sb.auth.getSession();
     try {
+      const { data: { session }, error: sessionError } = await sb.auth.getSession();
+      if (sessionError || !session) throw sessionError ?? new Error('Please sign in again.');
       const r = await fetch('/api/demo/advance', { method: 'POST', headers: { Authorization: 'Bearer ' + session?.access_token }, body: JSON.stringify({ days }) });
       const j = await r.json().catch(() => ({}));
-      setNote(r.ok ? j.message : t('error') + ' (' + r.status + ')');
+      if (!r.ok) throw new Error(j.error || `${t('error')} (${r.status})`);
+      setNote(j.message);
       await load();
+    } catch (e: any) {
+      setNote(e?.message || t('error'));
     } finally { setBusy(false); }
   }
 
   async function reassign(id: string, officer: string) {
-    await sb.from('complaints').update({ assigned_officer: officer, status: 'Assigned' }).eq('id', id);
-    await sb.from('complaint_updates').insert({ complaint_id: id, status: 'Assigned' as any, remark: 'Reassigned by Senior Officer' });
-    load();
+    setNote('');
+    try {
+      const { data: { session }, error: sessionError } = await sb.auth.getSession();
+      if (sessionError || !session) throw sessionError ?? new Error('Please sign in again.');
+      const response = await fetch(`/api/complaints/${id}/reassign`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ officerId: officer }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || t('error'));
+      await load();
+    } catch (e: any) {
+      setNote(e?.message || t('error'));
+    }
   }
 
   const n = (s: string) => rows.filter(r => r.status === s).length;
   const escRows = rows.filter(r => r.status === 'Escalated');
+  const pendingCount = rows.filter(r => ['Submitted', 'Assigned', 'In Progress'].includes(r.status)).length;
   const CATS = ['Cybercrime','Financial Fraud','Lost Property','Traffic Complaints'];
   const barData = offs.map(o => ({
     name: o.name.replace(' (fictional)','').replace('SI ',''),
-    pending: rows.filter(r => r.assigned_officer === o.id && !['Resolved','Escalated'].includes(r.status)).length,
+    pending: rows.filter(r => r.assigned_officer === o.id && ['Submitted', 'Assigned', 'In Progress'].includes(r.status)).length,
     resolved: rows.filter(r => r.assigned_officer === o.id && r.status === 'Resolved').length,
   }));
   const pieData = CATS.map(c => ({ name: t(('cat.' + c) as any), value: rows.filter(r => r.category === c).length }));
@@ -76,6 +123,13 @@ export default function Senior() {
     { key: 'history', label: 'Escalation Log' },
   ];
 
+  if (loading) return <p className="p-4">{t('loading')}</p>;
+  if (loadError) return (
+    <div className="max-w-xl mx-auto mt-6 rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+      {loadError}
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       {/* Demo controls */}
@@ -84,15 +138,15 @@ export default function Senior() {
           <span className="font-bold text-sm text-amber-800">🧪 DEMO MODE</span>
           <button className={btn} disabled={busy} onClick={() => advance(3)}>{t('advance3')}</button>
           <button className={btn} disabled={busy} onClick={() => advance(1)}>{t('advance1')}</button>
-          {note && <span className="text-sm font-medium text-amber-900 bg-amber-100 rounded px-2 py-1 flex-1">{note}</span>}
         </div>
       )}
+      {note && <p className="text-sm font-medium text-amber-900 bg-amber-100 border border-amber-200 rounded px-3 py-2">{note}</p>}
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Card label={t('total')} v={rows.length} />
         <Card label={t('resolved')} v={n('Resolved')} />
-        <Card label={t('pending')} v={rows.length - n('Resolved')} />
+        <Card label={t('pending')} v={pendingCount} />
         <Card label={t('overdue')} v={n('Overdue')} cls="border-red-400" />
         <Card label={t('escalated')} v={n('Escalated')} cls="border-red-900 border-2" />
       </div>

@@ -9,10 +9,29 @@ export default function Login() {
   const [email, setEmail] = useState(''); const [pw, setPw] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
   async function go(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setErr('');
-    const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
-    if (error || !data.user) { setErr(error?.message ?? t('error')); setBusy(false); return; }
-    const { data: me } = await sb.from('users').select('role').eq('id', data.user.id).single();
-    r.push(me?.role === 'officer' ? '/officer' : me?.role === 'citizen' || !me ? '/my' : '/senior');
+    try {
+      const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
+      if (error || !data.user) throw error ?? new Error(t('error'));
+
+      const { data: me, error: roleError } = await sb.from('users').select('role').eq('id', data.user.id).single();
+      if (roleError || !me) {
+        await sb.auth.signOut();
+        throw new Error('Your account profile is missing. Ask an administrator to restore it.');
+      }
+
+      const route = me.role === 'officer' ? '/officer'
+        : me.role === 'citizen' ? '/my'
+        : me.role === 'senior' || me.role === 'admin' ? '/senior'
+        : null;
+      if (!route) {
+        await sb.auth.signOut();
+        throw new Error('Your account has an unsupported role.');
+      }
+      r.push(route);
+    } catch (e: any) {
+      setErr(e?.message || t('error'));
+      setBusy(false);
+    }
   }
   async function signup() {
     setErr(''); if (!email || pw.length < 6) { setErr(t('required')); return; }

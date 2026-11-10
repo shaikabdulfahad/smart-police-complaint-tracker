@@ -15,20 +15,53 @@ export default function Officer() {
   const [msg, setMsg] = useState(''); const [loading, setLoading] = useState(true);
   const [me, setMe] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
+  const [loadError, setLoadError] = useState('');
 
   async function load() {
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) { location.href = '/login'; return; }
-    const { data: m } = await sb.from('users').select('*').eq('id', user.id).single();
-    setMe(m);
-    const { data } = await sb.from('complaints').select('*').eq('assigned_officer', user.id).order('due_at');
-    setRows(data ?? []); setLoading(false);
+    try {
+      const { data: { user }, error: userError } = await sb.auth.getUser();
+      if (userError) throw userError;
+      if (!user) {
+        setRows([]);
+        setLoadError('Please log in to view officer complaints.');
+        setLoading(false);
+        return;
+      }
+
+      const { data: m, error: meError } = await sb.from('users').select('*').eq('id', user.id).single();
+      if (meError) throw meError;
+      setMe(m);
+      const { data, error: complaintsError } = await sb.from('complaints').select('*').eq('assigned_officer', user.id).order('due_at');
+      if (complaintsError) throw complaintsError;
+      setRows(data ?? []);
+      setLoadError('');
+    } catch (e: any) {
+      setRows([]);
+      setLoadError(e?.message || 'Unable to load officer dashboard.');
+    } finally {
+      setLoading(false);
+    }
   }
+
+  useEffect(() => {
+    void load();
+  }, []);
 
   async function openComplaint(r: any) {
     setSel(r); setSt(r.status === 'Resolved' ? 'Resolved' : 'In Progress'); setRem(''); setMsg('');
-    const { data } = await sb.from('complaint_updates').select('*').eq('complaint_id', r.id).order('created_at');
-    setHistory(data ?? []);
+    try {
+      const { data: { session }, error: sessionError } = await sb.auth.getSession();
+      if (sessionError || !session) throw sessionError ?? new Error('Please sign in again.');
+      const response = await fetch('/api/track?id=' + encodeURIComponent(r.tracking_id), {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || t('error'));
+      setSel({ ...r, attachments: result.complaint.attachments ?? [] });
+      setHistory(result.updates ?? []);
+    } catch (e: any) {
+      setMsg(e?.message || t('error'));
+    }
   }
 
   async function save() {
@@ -52,6 +85,11 @@ export default function Officer() {
   const urgent = rows.filter(r => !['Resolved','Escalated'].includes(r.status) && new Date(r.due_at).getTime() - Date.now() < 86400000);
 
   if (loading) return <p className="p-4">{t('loading')}</p>;
+  if (loadError) return (
+    <div className="max-w-xl mx-auto mt-6 rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+      {loadError} <a href="/login" className="underline font-medium">Go to login</a>
+    </div>
+  );
 
   return (
     <div className="space-y-4">

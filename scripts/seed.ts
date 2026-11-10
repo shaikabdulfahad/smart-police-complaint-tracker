@@ -2,31 +2,60 @@ import { createClient } from '@supabase/supabase-js';
 const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } });
 const PW = 'Demo@12345';
 
+function assertSuccess(error: { message: string } | null, operation: string) {
+  if (error) throw new Error(`${operation}: ${error.message}`);
+}
+
 async function mk(email: string, name: string, role: string, phone: string, extra: any = {}) {
-  const { data, error } = await db.auth.admin.createUser({ email, password: PW, email_confirm: true });
-  if (error) throw new Error(`createUser ${email}: ${error.message}`);
-  const { error: e2 } = await db.from('users').insert({ id: data.user.id, name, role, phone, ...extra });
-  if (e2) throw new Error(`insert user ${email}: ${e2.message}`);
-  return data.user.id;
+  let existingUser;
+  for (let page = 1; ; page++) {
+    const { data, error } = await db.auth.admin.listUsers({ page, perPage: 100 });
+    assertSuccess(error, 'List auth users');
+    existingUser = data.users.find(user => user.email?.toLowerCase() === email);
+    if (existingUser || data.users.length < 100) break;
+  }
+
+  const { data, error } = existingUser
+    ? await db.auth.admin.updateUserById(existingUser.id, { password: PW, email_confirm: true })
+    : await db.auth.admin.createUser({ email, password: PW, email_confirm: true });
+  assertSuccess(error, `Create or update auth user ${email}`);
+  if (!data.user) throw new Error(`Auth user ${email} was not returned.`);
+  const id = data.user.id;
+
+  const { error: profileError } = await db.from('users').upsert(
+    { id, name, role, phone, ...extra },
+    { onConflict: 'id' }
+  );
+  assertSuccess(profileError, `Upsert profile ${email}`);
+  return id;
 }
 
 (async () => {
-  console.log('Clearing previous demo data...');
-  // delete complaints first (FK)
-  await db.from('reminder_logs').delete().not('id', 'is', null);
-  await db.from('escalation_logs').delete().not('id', 'is', null);
-  await db.from('complaint_updates').delete().not('id', 'is', null);
-  await db.from('complaints').delete().not('id', 'is', null);
-  await db.from('users').delete().not('id', 'is', null);
-  await db.from('app_config').update({ demo_offset_hours: 0 }).eq('id', 1);
-
-  const { data: ul } = await db.auth.admin.listUsers({ perPage: 200 });
-  for (const u of ul?.users ?? []) {
-    if (u.email?.endsWith('@demo.test')) {
-      const { error } = await db.auth.admin.deleteUser(u.id);
-      if (error) throw error;
-    }
+  if (process.env.DEMO_MODE !== 'true') {
+    throw new Error('Refusing to seed: set DEMO_MODE=true in .env.local first.');
   }
+  if (process.env.SEED_DEMO_CONFIRM !== 'I_ACCEPT_DEMO_DATA_RESET') {
+    throw new Error('Refusing to seed: set SEED_DEMO_CONFIRM=I_ACCEPT_DEMO_DATA_RESET to confirm replacing the demo dataset.');
+  }
+
+  console.log('Clearing previous demo data...');
+  const { data: previous, error: previousError } = await db
+    .from('complaints')
+    .select('id')
+    .eq('is_demo_seed', true);
+  assertSuccess(previousError, 'Find previous demo complaints');
+  const previousIds = (previous ?? []).map(complaint => complaint.id);
+
+  if (previousIds.length) {
+    for (const table of ['reminder_logs', 'escalation_logs', 'complaint_updates'] as const) {
+      const { error } = await db.from(table).delete().in('complaint_id', previousIds);
+      assertSuccess(error, `Delete old demo ${table}`);
+    }
+    const { error } = await db.from('complaints').delete().in('id', previousIds);
+    assertSuccess(error, 'Delete old demo complaints');
+  }
+  const { error: configError } = await db.from('app_config').update({ demo_offset_hours: 0 }).eq('id', 1);
+  assertSuccess(configError, 'Reset demo clock');
 
   console.log('Creating demo users...');
   const senior = await mk('senior@demo.test', 'Insp. Ravi Kumar (fictional)', 'senior', '9000000010');
@@ -88,21 +117,27 @@ async function mk(email: string, name: string, role: string, phone: string, extr
       category: cat, location: locs[i % 5], description: descs[i],
       assigned_officer: off, status, submitted_at: submitted, due_at: due,
       resolved_at: status === 'Resolved' ? new Date().toISOString() : null,
+      is_demo_seed: true,
     }).select('id').single();
     if (error) throw new Error(`complaint ${i + 1}: ${error.message}`);
 
-    await db.from('complaint_updates').insert({ complaint_id: c.id, status, remark: 'Complaint registered and assigned to officer' });
+    const { error: updateError } = await db.from('complaint_updates').insert({
+      complaint_id: c.id, status, remark: 'Complaint registered and assigned to officer',
+    });
+    assertSuccess(updateError, `Insert complaint ${i + 1} history`);
 
     if (['Overdue', 'Escalated'].includes(status)) {
-      await db.from('reminder_logs').insert({
+      const { error: reminderError } = await db.from('reminder_logs').insert({
         complaint_id: c.id, officer_id: off, due_at: due, simulated_at: due, mode: 'mock', status: 'mock_sent',
       });
+      assertSuccess(reminderError, `Insert complaint ${i + 1} reminder`);
     }
     if (status === 'Escalated') {
-      await db.from('escalation_logs').insert({
+      const { error: escalationError } = await db.from('escalation_logs').insert({
         complaint_id: c.id, from_officer: off, to_senior: senior,
         reason: 'Unresolved 24h after overdue reminder', simulated_at: new Date().toISOString(),
       });
+      assertSuccess(escalationError, `Insert complaint ${i + 1} escalation`);
     }
     console.log(`  ${i + 1}/20 ${c.id.slice(0,8)} [${status}]`);
   }

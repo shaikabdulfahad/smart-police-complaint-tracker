@@ -1,1 +1,8 @@
-export default {};
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const config = {
+  outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),
+};
+
+export default config;

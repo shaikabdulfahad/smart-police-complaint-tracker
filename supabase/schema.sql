@@ -9,10 +9,9 @@ create table users (
   department text,
   created_at timestamptz default now());
 
-create sequence complaint_seq start 1024;
 create table complaints (
   id uuid primary key default gen_random_uuid(),
-  tracking_id text unique not null default ('SPT' || nextval('complaint_seq')),
+  tracking_id text unique not null default ('SPT' || upper(encode(gen_random_bytes(8), 'hex'))),
   citizen_id uuid references users(id),
   citizen_name text not null, citizen_phone text not null,
   category text not null check (category in ('Cybercrime','Financial Fraud','Lost Property','Traffic Complaints')),
@@ -22,7 +21,8 @@ create table complaints (
   submitted_at timestamptz not null default now(),
   due_at timestamptz not null,
   resolved_at timestamptz,
-  attachments jsonb default '[]'::jsonb);
+  attachments jsonb default '[]'::jsonb,
+  is_demo_seed boolean not null default false);
 create index on complaints(status, due_at);
 create index on complaints(assigned_officer);
 create index on complaints(citizen_id);
@@ -62,32 +62,34 @@ alter table escalation_logs enable row level security;
 alter table complaint_updates enable row level security;
 alter table app_config enable row level security;
 
-create function my_role() returns user_role language sql stable security definer as
-$$ select role from users where id = auth.uid() $$;
+create or replace function public.my_role()
+returns public.user_role
+language sql stable security definer
+set search_path = ''
+as $$ select role from public.users where id = auth.uid() $$;
 
 create policy "self" on users for select using (id = auth.uid() or my_role() in ('senior','admin'));
 create policy "citizen_own" on complaints for select using (citizen_id = auth.uid());
 create policy "officer_read" on complaints for select using (assigned_officer = auth.uid());
-create policy "officer_update" on complaints for update using (assigned_officer = auth.uid());
-create policy "senior_all" on complaints for all using (my_role() in ('senior','admin'));
+create policy "senior_read" on complaints for select using (my_role() in ('senior','admin'));
 create policy "logs_staff" on reminder_logs for select using (my_role() in ('officer','senior','admin'));
 create policy "esc_staff" on escalation_logs for select using (my_role() in ('senior','admin'));
 create policy "upd_read" on complaint_updates for select using (
   exists (select 1 from complaints c where c.id = complaint_id
           and (c.citizen_id = auth.uid() or c.assigned_officer = auth.uid()))
   or my_role() in ('senior','admin'));
-create policy "cfg_admin" on app_config for all using (my_role() = 'admin');
 -- Anonymous tracking by ID goes through a server route using the service role, returning limited fields only.
 
 -- Citizen self-registration (role locked to citizen)
 create policy "citizen_signup" on users for insert with check (id = auth.uid() and role = 'citizen');
 
--- PS-2 fix: officer can insert updates on their assigned complaints
--- (server-side route uses service role anyway, but this allows future direct-client patterns)
-create policy "officer_upd_insert" on complaint_updates for insert
+-- Private complaint documents can only be uploaded to a complaint owned by the caller.
+create policy "complaint_docs_insert_own" on storage.objects for insert to authenticated
   with check (
-    exists (select 1 from complaints c where c.id = complaint_id and c.assigned_officer = auth.uid())
-    or my_role() in ('senior','admin'));
-
--- Allow escalation SMS to be logged (kind='escalation', relaxes unique constraint by kind)
--- The unique constraint is on (complaint_id, kind, due_at) so escalation entries don't conflict with deadline ones.
+    bucket_id = 'complaint-docs'
+    and exists (
+      select 1 from public.complaints c
+      where c.id::text = (storage.foldername(name))[1]
+        and c.citizen_id = auth.uid()
+    )
+  );

@@ -11,9 +11,9 @@ College project prototype (fictional data, not an official police system). Citiz
 ## Quick start (local)
 
 ```bash
-npm install
+npm ci
 cp .env.example .env.local   # fill in Supabase keys (see Setup below)
-npm run seed                  # creates 20 fictional complaints + demo accounts
+npm run seed                  # after setting SEED_DEMO_CONFIRM in .env.local
 npm run dev                   # http://localhost:3000
 ```
 
@@ -24,14 +24,13 @@ npm run dev                   # http://localhost:3000
 ### 1. Supabase project
 1. Create a free project at supabase.com.
 2. **SQL Editor → New query:** paste the full contents of `supabase/schema.sql` and click **Run**.
-3. If you already ran an older schema.sql: also run `supabase/migration_ps2.sql` to add the `department` and `attachments` columns.
-4. **Authentication → Sign In / Providers → Email:** turn off **Confirm email**. Citizen sign-up fails without this.
+3. **Authentication → Sign In / Providers → Email:** turn off **Confirm email** for demo accounts.
 
 ### 2. Storage bucket (for document uploads)
 1. In Supabase go to **Storage → New bucket**.
 2. Name: `complaint-docs`, Public: **off**.
-3. Click **Policies → New policy → For authenticated users → INSERT** and save.
-4. Without this bucket, complaint submission still works — attachments are silently skipped.
+3. Run `supabase/migration_ps2.sql`. It configures 5 MB PDF/JPG/PNG uploads and allows authenticated citizens to upload only to their own complaint. If you previously created a broad authenticated INSERT policy, remove it; Storage policies are permissive when any matching policy allows access.
+4. Citizens must sign in to upload documents; complaint submission itself remains available without signing in.
 
 ### 3. Environment variables
 Copy `.env.example` to `.env.local` and fill in:
@@ -44,14 +43,21 @@ SLA_HOURS=72
 GRACE_HOURS=24
 SMS_MODE=mock
 CRON_SECRET=any-random-string
+SEED_DEMO_CONFIRM=I_ACCEPT_DEMO_DATA_RESET
 ```
 
 ### 4. Seed
+Seeding is restricted to demo mode and replaces only the 20 generated fictional complaints. It does not delete other complaints, profiles, or auth accounts. To confirm the reset, add this line to `.env.local` before running the seed:
+
+```
+SEED_DEMO_CONFIRM=I_ACCEPT_DEMO_DATA_RESET
+```
+
 ```bash
 npm run seed
 ```
 Creates 20 fictional complaints across all statuses, plus five demo accounts.
-Re-runnable — deletes previous demo data first.
+Re-runnable — replaces only the previous seeded complaints and updates the five demo accounts.
 
 ---
 
@@ -119,7 +125,7 @@ To send one real test SMS:
 1. Push to GitHub. Import into Vercel (Next.js preset).
 2. Add all variables from `.env.example` in Vercel. `SUPABASE_SERVICE_ROLE_KEY` is server-only — never prefix with `NEXT_PUBLIC_`.
 3. Keep `DEMO_MODE=true` and `SMS_MODE=mock` for the presentation.
-4. `vercel.json` schedules the deadline processor daily at 3 AM IST (Vercel Hobby allows one cron per day). For more frequent processing, upgrade to Vercel Pro and change the schedule to `0 * * * *`.
+4. `vercel.json` schedules the deadline processor daily at 03:00 UTC (08:30 IST). Vercel cron schedules use UTC.
 5. The demo +3/+1 Day buttons trigger the processor directly — the cron is not needed for the demo.
 
 ---

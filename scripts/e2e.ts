@@ -8,7 +8,7 @@ import { processDeadlines } from '../lib/processor';
   const { data: off } = await db.from('users').select('id').eq('role', 'officer').limit(1).single();
   const { data: c } = await db.from('complaints').insert({ citizen_name: 'E2E (fictional)', citizen_phone: '9000099999', category: 'Cybercrime', location: 'Test', description: 'e2e',
     assigned_officer: off!.id, status: 'Assigned', due_at: new Date(Date.now() + 72 * 3600_000).toISOString() }).select('id,tracking_id').single();
-  assert.match(c!.tracking_id, /^SPT\d+$/); console.log('1 unique ID', c!.tracking_id);
+  assert.match(c!.tracking_id, /^SPT(?:\d+|[A-F0-9]{16})$/); console.log('1 unique ID', c!.tracking_id);
   const status = async () => (await db.from('complaints').select('status').eq('id', c!.id).single()).data!.status;
   const nRem = async () => (await db.from('reminder_logs').select('id', { count: 'exact', head: true }).eq('complaint_id', c!.id)).count;
   try {
